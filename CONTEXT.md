@@ -163,7 +163,7 @@ Pasos:
 
 ### FASE 2 — Diseño del modelo de datos
 
-**Objetivo:** diseñar el schema de Supabase basándose en el contrato JSON ya estable del solver.
+**Objetivo:** diseñar el schema de Neon basándose en el contrato JSON ya estable del solver.
 
 Tablas mínimas previstas:
 - `users` (auth)
@@ -308,3 +308,114 @@ Cuando confirmes que has leído este documento Y el PDF:
 ---
 
 **Última actualización:** punto de partida del proyecto, redactado a partir de la conversación de diseño previa.
+
+
+
+Ejemplo extraido FASE 0 :
+
+
+Cuadrante completo de una semana — generado ahora
+OPTIMAL en 11.6 s. 591/601 slots-persona cubiertos (98.3 %). 0 huecos de etiqueta. 34 jornadas continuadas, 4 partidas (1 por persona en SARA, YULI, MAYTE, JOSE; dispersión = 1).
+
+Vista por trabajador (la legible)
+EDGAR — DUEÑO, contrato 12-28h, 25.5 h semana
+
+LUN  08:00-15:00 (7.0h)   continuada
+MAR  08:00-12:30 (4.5h)   continuada
+MIE  08:00-12:30 (4.5h)   continuada
+JUE  08:00-12:30 (4.5h)   continuada
+VIE  10:30-15:30 (5.0h)   continuada
+SAB  descanso
+DOM  descanso
+SARA — ENCARGADO, contrato 40-44h, 42.0 h semana
+
+LUN  descanso
+MAR  07:00-15:00 (8.0h)   continuada
+MIE  07:00-15:30 (8.5h)   continuada
+JUE  06:00-15:00 (9.0h)   continuada     <- cubre ventana 11-13
+VIE  06:00-10:30 (4.5h) | 20:00-00:00 (4.0h)   PARTIDA
+SAB  16:00-00:00 (8.0h)   continuada
+DOM  descanso
+MILAGROS — SEMI_ENCARGADO, contrato 40-44h, 43.5 h semana
+
+LUN  06:00-15:00 (9.0h)   continuada
+MAR  15:00-00:00 (9.0h)   continuada
+MIE  15:30-00:00 (8.5h)   continuada
+JUE  descanso
+VIE  descanso
+SAB  07:30-16:00 (8.5h)   continuada
+DOM  06:30-15:00 (8.5h)   continuada
+DANA — SEMI_ENCARGADO, contrato 40-44h, 41.5 h semana
+
+LUN  15:00-00:00 (9.0h)   continuada
+MAR  descanso
+MIE  descanso
+JUE  15:00-00:00 (9.0h)   continuada
+VIE  15:30-00:00 (8.5h)   continuada
+SAB  18:00-00:00 (6.0h)   continuada
+DOM  15:00-00:00 (9.0h)   continuada
+YULI — CAMARERO_BÁSICO, contrato 40-44h, 42.0 h semana
+
+LUN  15:00-00:00 (9.0h)   continuada
+MAR  15:00-00:00 (9.0h)   continuada
+MIE  15:00-00:00 (9.0h)   continuada
+JUE  descanso
+VIE  descanso
+SAB  06:30-12:30 (6.0h)   continuada
+DOM  07:30-12:30 (5.0h) | 20:00-00:00 (4.0h)   PARTIDA
+ANASTASIA — CAMARERO_BÁSICO, contrato 40-44h, 41.5 h semana
+
+LUN  descanso
+MAR  06:00-15:00 (9.0h)   continuada
+MIE  06:00-15:00 (9.0h)   continuada
+JUE  15:00-00:00 (9.0h)   continuada
+VIE  16:00-00:00 (8.0h)   continuada
+SAB  17:30-00:00 (6.5h)   continuada
+DOM  descanso
+MAYTE — CAMARERO_BÁSICO, contrato 34h, 34.0 h semana
+
+LUN  07:00-12:30 (5.5h)   continuada
+MAR  descanso
+MIE  descanso
+JUE  07:00-15:00 (8.0h)   continuada
+VIE  08:00-12:30 (4.5h) | 18:00-21:30 (3.5h)   PARTIDA
+SAB  09:30-17:30 (8.0h)   continuada
+DOM  08:00-12:30 (4.5h)   continuada
+JOSE — CAMARERO_BÁSICO, contrato 12-28h, 25.5 h semana
+
+LUN  descanso
+MAR  descanso
+MIE  descanso
+JUE  descanso
+VIE  07:00-16:00 (9.0h)   continuada
+SAB  08:00-12:30 (4.5h) | 20:00-23:30 (3.5h)   PARTIDA
+DOM  11:30-20:00 (8.5h)   continuada
+Resumen semanal por día
+
+TRABAJADOR      LUN    MAR    MIE    JUE    VIE    SAB    DOM    TOTAL  RANGO h
+EDGAR           7.0    4.5    4.5    4.5    5.0    0.0    0.0     25.5  12-28
+SARA            0.0    8.0    8.5    9.0    8.5    8.0    0.0     42.0  40-44
+MILAGROS        9.0    9.0    8.5    0.0    0.0    8.5    8.5     43.5  40-44
+DANA            9.0    0.0    0.0    9.0    8.5    6.0    9.0     41.5  40-44
+YULI            9.0    9.0    9.0    0.0    0.0    6.0    9.0     42.0  40-44
+ANASTASIA       0.0    9.0    9.0    9.0    8.0    6.5    0.0     41.5  40-44
+MAYTE           5.5    0.0    0.0    8.0    8.0    8.0    4.5     34.0     34
+JOSE            0.0    0.0    0.0    0.0    9.0    8.0    8.5     25.5  12-28
+TOTAL          39.5   39.5   39.5   39.5   47.0   51.0   39.5    295.5
+Demanda        39.5   39.5   39.5   39.5   49.5   51.5   41.5    300.5
+Huecos del cuadrante (los inevitables)
+Día	Slot	Demanda	Cubierto	Falta
+VIE	21:30-22:00	4	3	1 CB+
+VIE	22:00-22:30	4	3	1 CB+
+VIE	22:30-23:00	4	3	1 CB+
+VIE	23:00-23:30	4	3	1 CB+
+VIE	23:30-00:00	4	3	1 CB+
+SAB	23:30-00:00	4	3	1 CB+
+DOM	09:30-10:00	4	3	1 CB+
+DOM	10:00-10:30	4	3	1 CB+
+DOM	10:30-11:00	4	3	1 CB+
+DOM	11:00-11:30	4	3	1 CB+
+Estos 10 slots-persona (5 h sin cubrir) son estructurales: con la plantilla actual y las restricciones del PDF, no se puede mejorar. La subfase 0.12 generará propuestas concretas para cerrarlos (p.ej. ampliar la horquilla de JOSE).
+
+Conclusión
+El solver de Fase 0 está completo y correcto. Genera en ~12 s un cuadrante semanal realista, legal y respetuoso con las restricciones individuales, dejando solo los huecos imposibles de cubrir con la plantilla actual. Listo para empaquetar como servicio FastAPI (Fase 1) cuando lo decidas.
