@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py --version)",
+      "Bash(py -3 --version)",
+      "Bash(where py *)",
+      "Bash(where python *)",
+      "Bash(where python3 *)",
+      "Bash(py -m venv solver/.venv)"
+    ]
+  }
+}
