@@ -21,9 +21,11 @@ Uso local:
 
 import logging
 import os
+import random
+from typing import List
 
 from fastapi import FastAPI, Header, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core import resolver_problema
 from schemas import ScheduleRequest, ScheduleResponse
@@ -117,3 +119,68 @@ def solve(
         response.slots_persona_huecos,
     )
     return response
+
+
+# ---------------------------------------------------------------------------
+# Solve variants (multiples soluciones equivalentes)
+# ---------------------------------------------------------------------------
+
+class SolveVariantsRequest(BaseModel):
+    """Pide N soluciones independientes del mismo problema, cada una con un
+    seed aleatorio distinto. CP-SAT con `randomize_search=True` explora el
+    espacio de soluciones en orden distinto y, cuando hay degeneracion en el
+    optimo (lo habitual en cuadrantes), produce asignaciones diferentes pero
+    de calidad equivalente."""
+    request: ScheduleRequest
+    num_variants: int = Field(default=3, ge=1, le=8)
+
+
+class SolveVariantsResponse(BaseModel):
+    """Lista ordenada de variantes generadas. La primera no tiene por que ser
+    la mejor: la web ordena por calidad antes de mostrarlas."""
+    variants: List[ScheduleResponse]
+
+
+@app.post("/solve-variants", response_model=SolveVariantsResponse)
+def solve_variants(
+    body: SolveVariantsRequest,
+    x_api_key: str | None = Header(default=None, alias="x-api-key"),
+):
+    """Genera N cuadrantes equivalentes en calidad pero distintos en
+    asignacion. Cada variante usa un seed aleatorio independiente para que
+    CP-SAT explore caminos distintos del arbol de busqueda."""
+    _check_auth(x_api_key)
+
+    n = body.num_variants
+    base_seed = random.randint(1, 10_000_000)
+    seeds = [base_seed + i for i in range(n)]
+
+    logger.info(
+        "POST /solve-variants - %d variantes, %d trabajadores, seeds=%s",
+        n, len(body.request.trabajadores), seeds,
+    )
+
+    variants: List[ScheduleResponse] = []
+    for i, seed in enumerate(seeds):
+        # Ensure each variant uses its own seed (overrides what may have been
+        # passed in body.request.parametros.seed).
+        body.request.parametros.seed = seed
+        try:
+            response = resolver_problema(body.request, seed=seed)
+            variants.append(response)
+            logger.info(
+                "  variant %d/%d: estado=%s, huecos=%d, partidas=%d, tiempo=%.2fs",
+                i + 1, n, response.estado,
+                response.slots_persona_huecos,
+                response.metricas.total_partidas,
+                response.tiempo_calculo_segundos,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.exception("Error inesperado en variante %d", i + 1)
+            raise HTTPException(
+                status_code=500, detail=f"Error en variante {i + 1}: {e}"
+            )
+
+    return SolveVariantsResponse(variants=variants)

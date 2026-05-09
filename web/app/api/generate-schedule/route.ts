@@ -16,6 +16,33 @@ const HORARIO_APERTURA: Record<string, { apertura: string; cierre: string }> = {
   DOMINGO:   { apertura: "06:30", cierre: "00:00" },
 };
 
+interface SolverResponse {
+  estado: string;
+  tiempo_calculo_segundos: number;
+  seed_usado: number | null;
+  slots_persona_demanda: number;
+  slots_persona_asignados: number;
+  slots_persona_huecos: number;
+  horas_persona_demanda: number;
+  horas_persona_asignadas: number;
+  horas_persona_huecos: number;
+  cuadrante: Array<{
+    nombre: string;
+    jornadas: Array<{
+      dia: string;
+      tipo: string;
+      tramos: unknown[];
+      horas: number;
+      requiere_pausa_20min: boolean;
+    }>;
+  }>;
+  metricas: unknown;
+  huecos_cobertura: unknown;
+  huecos_etiqueta: unknown;
+  gaps_entre_jornadas: unknown;
+  pausas_obligatorias: unknown;
+}
+
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
@@ -23,10 +50,9 @@ export async function POST(req: NextRequest) {
   if (!restaurantId) return NextResponse.json({ error: "Sin restaurante" }, { status: 400 });
 
   const body = await req.json().catch(() => ({}));
-  const seed: number | undefined = body.seed ?? undefined;
+  const numVariants: number = Math.max(1, Math.min(5, parseInt(body.num_variants ?? "3")));
   const timeLimit: number = body.time_limit ?? 60;
 
-  // Load workers
   const workers = await sql(
     `SELECT w.nombre, w.rol,
             c.tipo, c.horas, c.min_horas, c.max_horas,
@@ -46,13 +72,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Sin trabajadores. Añade tu plantilla primero." }, { status: 400 });
   }
 
-  // Load shift needs
   const needs = await sql(
     "SELECT dia, inicio, fin, personas, personas_por_rol, etiquetas FROM shift_needs WHERE restaurant_id = $1 ORDER BY dia, inicio",
     [restaurantId]
   );
 
-  // Build request for solver
   const franjas_num: Record<string, unknown[]> = {};
   const franjas_rol: Record<string, unknown[]> = {};
   const franjas_eti: Record<string, unknown[]> = {};
@@ -85,20 +109,19 @@ export async function POST(req: NextRequest) {
     franjas_num,
     franjas_rol,
     franjas_eti,
-    parametros: { seed, time_limit_seconds: timeLimit },
+    parametros: { time_limit_seconds: timeLimit },
   };
 
-  // Call solver
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (SOLVER_KEY) headers["x-api-key"] = SOLVER_KEY;
 
   let solverRes: Response;
   try {
-    solverRes = await fetch(`${SOLVER_URL}/solve`, {
+    solverRes = await fetch(`${SOLVER_URL}/solve-variants`, {
       method: "POST",
       headers,
-      body: JSON.stringify(solverRequest),
-      signal: AbortSignal.timeout((timeLimit + 30) * 1000),
+      body: JSON.stringify({ request: solverRequest, num_variants: numVariants }),
+      signal: AbortSignal.timeout((timeLimit * numVariants + 30) * 1000),
     });
   } catch (e) {
     return NextResponse.json({ error: `No se pudo contactar el solver: ${(e as Error).message}` }, { status: 502 });
@@ -109,48 +132,75 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Solver error ${solverRes.status}: ${err}` }, { status: 502 });
   }
 
-  const result = await solverRes.json();
+  const result = (await solverRes.json()) as { variants: SolverResponse[] };
+  if (!result.variants || result.variants.length === 0) {
+    return NextResponse.json({ error: "El solver no devolvió variantes" }, { status: 502 });
+  }
 
-  // Save run
-  const [run] = await sql(
-    `INSERT INTO schedule_runs
-     (restaurant_id, estado, tiempo_calculo_seg, seed_usado,
-      slots_persona_demanda, slots_persona_asignados, slots_persona_huecos,
-      horas_persona_demanda, horas_persona_asignadas, horas_persona_huecos,
-      metricas, huecos_cobertura, huecos_etiqueta, gaps_entre_jornadas, pausas_obligatorias)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-     RETURNING id`,
-    [
-      restaurantId, result.estado, result.tiempo_calculo_segundos, result.seed_usado,
-      result.slots_persona_demanda, result.slots_persona_asignados, result.slots_persona_huecos,
-      result.horas_persona_demanda, result.horas_persona_asignadas, result.horas_persona_huecos,
-      JSON.stringify(result.metricas),
-      JSON.stringify(result.huecos_cobertura),
-      JSON.stringify(result.huecos_etiqueta),
-      JSON.stringify(result.gaps_entre_jornadas),
-      JSON.stringify(result.pausas_obligatorias),
-    ]
-  );
+  // Sort variants: fewer huecos first, then fewer partidas, then faster
+  const sorted = [...result.variants].sort((a, b) => {
+    const aH = (a as { metricas?: { total_partidas?: number } }).metricas?.total_partidas ?? 0;
+    const bH = (b as { metricas?: { total_partidas?: number } }).metricas?.total_partidas ?? 0;
+    if (a.slots_persona_huecos !== b.slots_persona_huecos)
+      return a.slots_persona_huecos - b.slots_persona_huecos;
+    if (aH !== bH) return aH - bH;
+    return a.tiempo_calculo_segundos - b.tiempo_calculo_segundos;
+  });
 
-  // Save assignments
+  // Generate group id
+  const [{ uuid: groupId }] = await sql<{ uuid: string }>("SELECT gen_random_uuid()::text as uuid");
+
+  // Workers id lookup for assignments
   const workerIds = await sql(
     "SELECT id, nombre FROM workers WHERE restaurant_id = $1",
     [restaurantId]
   );
   const nameToId = Object.fromEntries(workerIds.map((w) => [w.nombre as string, w.id as string]));
 
-  for (const ct of result.cuadrante) {
-    const workerId = nameToId[ct.nombre];
-    if (!workerId) continue;
-    for (const jornada of ct.jornadas) {
-      await sql(
-        `INSERT INTO schedule_assignments (run_id, worker_id, dia, tipo, tramos, horas, requiere_pausa_20min)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (run_id, worker_id, dia) DO NOTHING`,
-        [run.id, workerId, jornada.dia, jornada.tipo, JSON.stringify(jornada.tramos), jornada.horas, jornada.requiere_pausa_20min]
-      );
+  const runIds: string[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const v = sorted[i];
+    const [run] = await sql<{ id: string }>(
+      `INSERT INTO schedule_runs
+       (restaurant_id, estado, tiempo_calculo_seg, seed_usado,
+        slots_persona_demanda, slots_persona_asignados, slots_persona_huecos,
+        horas_persona_demanda, horas_persona_asignadas, horas_persona_huecos,
+        metricas, huecos_cobertura, huecos_etiqueta, gaps_entre_jornadas, pausas_obligatorias,
+        variant_group_id, variant_index)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       RETURNING id`,
+      [
+        restaurantId, v.estado, v.tiempo_calculo_segundos, v.seed_usado,
+        v.slots_persona_demanda, v.slots_persona_asignados, v.slots_persona_huecos,
+        v.horas_persona_demanda, v.horas_persona_asignadas, v.horas_persona_huecos,
+        JSON.stringify(v.metricas),
+        JSON.stringify(v.huecos_cobertura),
+        JSON.stringify(v.huecos_etiqueta),
+        JSON.stringify(v.gaps_entre_jornadas),
+        JSON.stringify(v.pausas_obligatorias),
+        groupId, i,
+      ]
+    );
+    runIds.push(run.id);
+
+    for (const ct of v.cuadrante) {
+      const workerId = nameToId[ct.nombre];
+      if (!workerId) continue;
+      for (const jornada of ct.jornadas) {
+        await sql(
+          `INSERT INTO schedule_assignments (run_id, worker_id, dia, tipo, tramos, horas, requiere_pausa_20min)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (run_id, worker_id, dia) DO NOTHING`,
+          [run.id, workerId, jornada.dia, jornada.tipo, JSON.stringify(jornada.tramos), jornada.horas, jornada.requiere_pausa_20min]
+        );
+      }
     }
   }
 
-  return NextResponse.json({ runId: run.id, estado: result.estado });
+  return NextResponse.json({
+    groupId,
+    runIds,
+    numVariants: sorted.length,
+    bestEstado: sorted[0].estado,
+  });
 }
