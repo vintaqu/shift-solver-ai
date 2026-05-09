@@ -11,6 +11,7 @@ import {
   Menu,
   X,
   CalendarRange,
+  CalendarClock,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,7 @@ const NAV = [
   { href: "/dashboard/needs",    label: "Necesidades",  icon: TableProperties },
   { href: "/dashboard/schedule", label: "Cuadrante",    icon: CalendarDays },
   { href: "/dashboard/calendar", label: "Calendario",   icon: CalendarRange },
+  { href: "/dashboard/periods",  label: "Periodos",     icon: CalendarClock },
   { href: "/dashboard/settings", label: "Ajustes",      icon: Settings },
 ];
 
@@ -100,11 +102,11 @@ export default function Sidebar() {
             <NavItem key={item.href} {...item} onClick={() => setOpen(false)} />
           ))}
           <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest px-3 mt-5 mb-2">Planificacion</p>
-          {NAV.slice(4, 5).map((item) => (
+          {NAV.slice(4, 6).map((item) => (
             <NavItem key={item.href} {...item} onClick={() => setOpen(false)} />
           ))}
           <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest px-3 mt-5 mb-2">Cuenta</p>
-          {NAV.slice(5).map((item) => (
+          {NAV.slice(6).map((item) => (
             <NavItem key={item.href} {...item} onClick={() => setOpen(false)} />
           ))}
         </nav>
