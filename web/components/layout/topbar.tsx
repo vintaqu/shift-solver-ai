@@ -27,7 +27,7 @@ export default function TopBar({ user }: Props) {
     : "U";
 
   return (
-    <header className="h-16 border-b border-slate-800 bg-slate-900/50 backdrop-blur flex items-center justify-end px-4 md:px-6 flex-shrink-0">
+    <header className="h-14 border-b border-slate-800/80 bg-[#080B14]/90 backdrop-blur-md flex items-center justify-end px-4 md:px-6 flex-shrink-0">
       <DropdownMenu>
         <DropdownMenuTrigger className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-800 transition-colors outline-none">
             <Avatar className="h-8 w-8">

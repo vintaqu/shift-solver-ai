@@ -12,7 +12,7 @@ export default async function DashboardLayout({
   if (!session) redirect("/login");
 
   return (
-    <div className="flex h-screen bg-slate-950 overflow-hidden">
+    <div className="flex h-screen overflow-hidden" style={{ background: "#080B14" }}>
       <Sidebar />
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <TopBar user={{ name: session.user?.name ?? null, email: session.user?.email ?? null }} />
