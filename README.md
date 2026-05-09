@@ -88,7 +88,7 @@ del PDF. Genera el cuadrante semanal de los 8 trabajadores reales en
 | Dockerfile Railway-friendly | hecho |
 | Validado en local con `uvicorn` + curl | hecho |
 | Validado en local con `docker build` + curl | hecho |
-| Desplegado en Railway | pendiente |
+| Desplegado en Railway | hecho (`shift-solver-ai-production.up.railway.app`) |
 
 ### Fase 2-4 — Pendientes
 

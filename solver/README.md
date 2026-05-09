@@ -134,7 +134,7 @@ Notas:
 | Dockerfile Railway-friendly | ✅ |
 | Validado en local con `uvicorn` + curl | ✅ |
 | Validado en local con `docker build` + curl | ✅ (imagen 538 MB, OPTIMAL en ~15 s) |
-| Desplegado en Railway | pendiente (acción del usuario) |
+| Desplegado en Railway | ✅ (`shift-solver-ai-production.up.railway.app`) |
 
 ---
 
