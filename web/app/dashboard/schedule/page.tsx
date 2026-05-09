@@ -7,6 +7,7 @@ import { CalendarDays, Clock, TrendingUp, Layers, Crown } from "lucide-react";
 
 interface Run {
   id: string;
+  nombre: string | null;
   estado: string;
   created_at: string;
   tiempo_calculo_seg: number;
@@ -24,7 +25,7 @@ export default async function SchedulePage() {
   if (!restaurantId) return <p className="text-slate-400">Sin restaurante.</p>;
 
   const runs = (await sql(
-    `SELECT id, estado, created_at, tiempo_calculo_seg,
+    `SELECT id, nombre, estado, created_at, tiempo_calculo_seg,
             slots_persona_asignados, slots_persona_demanda, slots_persona_huecos,
             variant_group_id, variant_index, variant_chosen
      FROM schedule_runs WHERE restaurant_id = $1
@@ -99,7 +100,7 @@ function SingleRunCard({ r }: { r: Run }) {
         </div>
         <div>
           <p className="text-white text-sm font-medium group-hover:text-indigo-300 transition-colors">
-            {new Date(r.created_at).toLocaleDateString("es-ES", {
+            {r.nombre ?? new Date(r.created_at).toLocaleDateString("es-ES", {
               weekday: "long",
               day: "numeric",
               month: "long",

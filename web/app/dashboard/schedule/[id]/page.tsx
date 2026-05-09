@@ -1,110 +1,177 @@
 import { auth } from "@/auth";
 import sql from "@/lib/db";
 import { notFound } from "next/navigation";
-import { ArrowLeft, CheckCircle2, AlertCircle, Clock, BarChart3 } from "lucide-react";
 import Link from "next/link";
+import { ArrowLeft, Layers, Pencil, AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import ScheduleGrid from "@/components/schedule/schedule-grid";
-import { DIAS, DIA_LABELS, ROL_LABELS, type WorkerRol, type ScheduleRun, type ScheduleAssignment } from "@/lib/types";
+import { DIA_LABELS } from "@/lib/types";
+import ScheduleEditor, {
+  type WorkerForEditor,
+  type AssignmentForEditor,
+} from "@/components/schedule/schedule-editor";
+import type { NeedRow } from "@/lib/schedule-coverage";
+
+interface ScheduleRunRow {
+  id: string;
+  nombre: string | null;
+  estado: string;
+  created_at: string;
+  edited_at: string | null;
+  variant_group_id: string | null;
+  variant_index: number | null;
+  variant_chosen: boolean;
+  huecos_cobertura: Array<{
+    dia: string;
+    inicio: string;
+    fin: string;
+    demanda_total: number;
+    cubierto: number;
+    falta_personas: number;
+  }>;
+}
 
 export default async function ScheduleRunPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
   const restaurantId = (session!.user as { restaurantId?: string }).restaurantId;
+  if (!restaurantId) return <p className="text-slate-400">Sin restaurante.</p>;
 
-  const [runs, assignments] = await Promise.all([
-    sql(
-      "SELECT * FROM schedule_runs WHERE id = $1 AND restaurant_id = $2",
+  const [runs, assignmentsRaw, workersRaw, needsRaw] = await Promise.all([
+    sql<ScheduleRunRow>(
+      `SELECT id, nombre, estado, created_at, edited_at,
+              variant_group_id, variant_index, variant_chosen,
+              huecos_cobertura
+       FROM schedule_runs
+       WHERE id = $1 AND restaurant_id = $2`,
       [id, restaurantId]
     ),
     sql(
-      `SELECT sa.*, w.nombre as worker_nombre, w.rol as worker_rol
-       FROM schedule_assignments sa
-       JOIN workers w ON w.id = sa.worker_id
-       WHERE sa.run_id = $1
-       ORDER BY w.nombre, sa.dia`,
+      `SELECT worker_id, dia, tipo, tramos, horas
+       FROM schedule_assignments WHERE run_id = $1`,
       [id]
+    ),
+    sql(
+      `SELECT w.id, w.nombre, w.rol,
+              c.tipo as contrato_tipo, c.horas, c.min_horas, c.max_horas
+       FROM workers w
+       LEFT JOIN contracts c ON c.worker_id = w.id
+       WHERE w.restaurant_id = $1
+       ORDER BY w.nombre`,
+      [restaurantId]
+    ),
+    sql<NeedRow>(
+      `SELECT dia, inicio, fin, personas
+       FROM shift_needs WHERE restaurant_id = $1`,
+      [restaurantId]
     ),
   ]);
 
   if (!runs[0]) notFound();
-  const run = runs[0] as unknown as ScheduleRun;
-  const coverage = Math.round(
-    (run.slots_persona_asignados / Math.max(run.slots_persona_demanda, 1)) * 100
-  );
+  const run = runs[0];
 
-  const assignmentsByWorker: Record<string, ScheduleAssignment[]> = {};
-  for (const a of assignments) {
-    const key = a.worker_nombre as string;
-    if (!assignmentsByWorker[key]) assignmentsByWorker[key] = [];
-    assignmentsByWorker[key].push(a as unknown as ScheduleAssignment);
-  }
+  const workers: WorkerForEditor[] = workersRaw.map((w) => ({
+    id: w.id as string,
+    nombre: w.nombre as string,
+    rol: w.rol as string,
+    contrato_str:
+      w.contrato_tipo === "fijo"
+        ? `${w.horas}h/sem`
+        : `${w.min_horas}–${w.max_horas}h/sem`,
+  }));
+
+  const assignments: AssignmentForEditor[] = assignmentsRaw.map((a) => ({
+    worker_id: a.worker_id as string,
+    dia: a.dia as string,
+    tipo: a.tipo as string,
+    horas: Number(a.horas),
+    tramos:
+      typeof a.tramos === "string"
+        ? JSON.parse(a.tramos)
+        : ((a.tramos as Array<{ inicio: string; fin: string }>) ?? []),
+  }));
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link href="/dashboard/schedule" className="text-slate-400 hover:text-white transition-colors">
+      {/* Top bar */}
+      <div className="flex items-start gap-3">
+        <Link
+          href={
+            run.variant_group_id
+              ? `/dashboard/schedule/group/${run.variant_group_id}`
+              : "/dashboard/schedule"
+          }
+          className="text-slate-400 hover:text-white transition-colors mt-1"
+        >
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold text-white truncate">Cuadrante semanal</h1>
-          <p className="text-slate-400 text-sm mt-0.5">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            {run.variant_group_id && (
+              <Badge className="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 text-xs flex items-center gap-1">
+                <Layers className="h-3 w-3" />
+                Variante {(run.variant_index ?? 0) + 1}
+              </Badge>
+            )}
+            {run.variant_chosen && (
+              <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs">
+                Elegida
+              </Badge>
+            )}
+            {run.edited_at && (
+              <Badge className="bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs flex items-center gap-1">
+                <Pencil className="h-3 w-3" />
+                Editado
+              </Badge>
+            )}
+            <RunBadge estado={run.estado} />
+          </div>
+          <p className="text-slate-500 text-sm">
+            Generado{" "}
             {new Date(run.created_at).toLocaleDateString("es-ES", {
-              weekday: "long", day: "numeric", month: "long", year: "numeric",
-              hour: "2-digit", minute: "2-digit",
+              weekday: "long",
+              day: "numeric",
+              month: "long",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
             })}
+            {run.edited_at && (
+              <>
+                {" · "}
+                Última edición{" "}
+                {new Date(run.edited_at).toLocaleDateString("es-ES", {
+                  day: "numeric",
+                  month: "short",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </>
+            )}
           </p>
         </div>
-        <RunBadge estado={run.estado} />
       </div>
 
-      {/* Métricas */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <MetricCard
-          label="Cobertura"
-          value={`${coverage}%`}
-          icon={<CheckCircle2 className="h-4 w-4 text-emerald-400" />}
-          color={coverage >= 95 ? "emerald" : coverage >= 80 ? "amber" : "red"}
-        />
-        <MetricCard
-          label="Huecos"
-          value={run.slots_persona_huecos}
-          icon={<AlertCircle className="h-4 w-4 text-red-400" />}
-          color={run.slots_persona_huecos === 0 ? "emerald" : "red"}
-        />
-        <MetricCard
-          label="Tiempo cálculo"
-          value={`${run.tiempo_calculo_seg?.toFixed(1)}s`}
-          icon={<Clock className="h-4 w-4 text-indigo-400" />}
-          color="indigo"
-        />
-        {run.metricas && (
-          <MetricCard
-            label="Jornadas"
-            value={`${run.metricas.total_continuadas}C / ${run.metricas.total_partidas}P`}
-            icon={<BarChart3 className="h-4 w-4 text-amber-400" />}
-            color="amber"
-          />
-        )}
-      </div>
+      <ScheduleEditor
+        runId={run.id}
+        initialNombre={run.nombre}
+        workers={workers}
+        initialAssignments={assignments}
+        needs={needsRaw}
+      />
 
-      {/* Cuadrícula semanal */}
-      <ScheduleGrid assignmentsByWorker={assignmentsByWorker} />
-
-      {/* Huecos */}
+      {/* Huecos detectados (snapshot del solver) */}
       {run.huecos_cobertura && run.huecos_cobertura.length > 0 && (
         <Card className="bg-slate-900 border-slate-800">
           <CardHeader>
             <CardTitle className="text-white text-base flex items-center gap-2">
               <AlertCircle className="h-4 w-4 text-amber-400" />
-              Huecos detectados ({run.huecos_cobertura.length})
+              Huecos iniciales detectados por el solver ({run.huecos_cobertura.length})
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-slate-400 text-sm mb-3">
-              Slots que no se pudieron cubrir completamente con la plantilla actual y las restricciones legales.
+              Snapshot del momento de la generación — las estadísticas en vivo de arriba reflejan tus ediciones.
             </p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -134,28 +201,6 @@ export default async function ScheduleRunPage({ params }: { params: Promise<{ id
         </Card>
       )}
     </div>
-  );
-}
-
-function MetricCard({
-  label, value, icon, color,
-}: {
-  label: string; value: string | number; icon: React.ReactNode; color: string;
-}) {
-  const bg: Record<string, string> = {
-    emerald: "bg-emerald-500/10", amber: "bg-amber-500/10",
-    red: "bg-red-500/10", indigo: "bg-indigo-500/10",
-  };
-  return (
-    <Card className="bg-slate-900 border-slate-800">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-slate-400 text-xs">{label}</p>
-          <div className={`p-1.5 rounded-md ${bg[color]}`}>{icon}</div>
-        </div>
-        <p className="text-2xl font-bold text-white">{value}</p>
-      </CardContent>
-    </Card>
   );
 }
 
