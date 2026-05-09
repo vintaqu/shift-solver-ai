@@ -403,18 +403,19 @@ MAYTE           5.5    0.0    0.0    8.0    8.0    8.0    4.5     34.0     34
 JOSE            0.0    0.0    0.0    0.0    9.0    8.0    8.5     25.5  12-28
 TOTAL          39.5   39.5   39.5   39.5   47.0   51.0   39.5    295.5
 Demanda        39.5   39.5   39.5   39.5   49.5   51.5   41.5    300.5
+
 Huecos del cuadrante (los inevitables)
-Día	Slot	Demanda	Cubierto	Falta
-VIE	21:30-22:00	4	3	1 CB+
-VIE	22:00-22:30	4	3	1 CB+
-VIE	22:30-23:00	4	3	1 CB+
-VIE	23:00-23:30	4	3	1 CB+
-VIE	23:30-00:00	4	3	1 CB+
-SAB	23:30-00:00	4	3	1 CB+
-DOM	09:30-10:00	4	3	1 CB+
-DOM	10:00-10:30	4	3	1 CB+
-DOM	10:30-11:00	4	3	1 CB+
-DOM	11:00-11:30	4	3	1 CB+
+Día	Slot	        Demanda	Cubierto	Falta
+VIE	21:30-22:00	    4	    3	        1 CB+
+VIE	22:00-22:30	    4	    3	        1 CB+
+VIE	22:30-23:00	    4	    3	        1 CB+
+VIE	23:00-23:30	    4	    3	        1 CB+
+VIE	23:30-00:00	    4	    3	        1 CB+
+SAB	23:30-00:00	    4	    3	        1 CB+
+DOM	09:30-10:00	    4	    3	        1 CB+
+DOM	10:00-10:30	    4	    3	        1 CB+
+DOM	10:30-11:00	    4	    3	        1 CB+
+DOM	11:00-11:30	    4	    3	        1 CB+
 Estos 10 slots-persona (5 h sin cubrir) son estructurales: con la plantilla actual y las restricciones del PDF, no se puede mejorar. La subfase 0.12 generará propuestas concretas para cerrarlos (p.ej. ampliar la horquilla de JOSE).
 
 Conclusión
