@@ -42,9 +42,10 @@ type FormData = z.infer<typeof schema>;
 interface Props {
   workerId?: string;
   defaultValues?: Partial<FormData>;
+  onSuccess?: () => void;
 }
 
-export default function WorkerForm({ workerId, defaultValues }: Props) {
+export default function WorkerForm({ workerId, defaultValues, onSuccess }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const isEdit = !!workerId;
@@ -135,8 +136,12 @@ export default function WorkerForm({ workerId, defaultValues }: Props) {
       }
 
       toast.success(isEdit ? "Trabajador actualizado" : "Trabajador creado");
-      router.push("/dashboard/workers");
-      router.refresh();
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        router.push("/dashboard/workers");
+        router.refresh();
+      }
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -358,14 +363,16 @@ export default function WorkerForm({ workerId, defaultValues }: Props) {
           {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {isEdit ? "Guardar cambios" : "Crear trabajador"}
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="border-slate-700 text-slate-300"
-          onClick={() => router.back()}
-        >
-          Cancelar
-        </Button>
+        {!onSuccess && (
+          <Button
+            type="button"
+            variant="outline"
+            className="border-slate-700 text-slate-300"
+            onClick={() => router.back()}
+          >
+            Cancelar
+          </Button>
+        )}
       </div>
     </form>
   );
