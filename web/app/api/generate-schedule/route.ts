@@ -41,6 +41,7 @@ interface SolverResponse {
   huecos_etiqueta: unknown;
   gaps_entre_jornadas: unknown;
   pausas_obligatorias: unknown;
+  diagnostico: unknown;
 }
 
 export async function POST(req: NextRequest) {
@@ -166,8 +167,8 @@ export async function POST(req: NextRequest) {
         slots_persona_demanda, slots_persona_asignados, slots_persona_huecos,
         horas_persona_demanda, horas_persona_asignadas, horas_persona_huecos,
         metricas, huecos_cobertura, huecos_etiqueta, gaps_entre_jornadas, pausas_obligatorias,
-        variant_group_id, variant_index)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        variant_group_id, variant_index, diagnostico)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING id`,
       [
         restaurantId, v.estado, v.tiempo_calculo_segundos, v.seed_usado,
@@ -179,6 +180,7 @@ export async function POST(req: NextRequest) {
         JSON.stringify(v.gaps_entre_jornadas),
         JSON.stringify(v.pausas_obligatorias),
         groupId, i,
+        v.diagnostico ? JSON.stringify(v.diagnostico) : null,
       ]
     );
     runIds.push(run.id);

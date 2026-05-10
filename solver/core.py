@@ -26,6 +26,7 @@ from ortools.sat.python import cp_model
 
 from schemas import (
     CuadranteTrabajador,
+    Diagnostico,
     GapEntreJornadas,
     HuecoCobertura,
     HuecoEtiqueta,
@@ -34,6 +35,7 @@ from schemas import (
     Metricas,
     Parametros,
     PausaObligatoria,
+    Propuesta,
     ScheduleRequest,
     ScheduleResponse,
     TramoDia,
@@ -809,6 +811,310 @@ def serializar_response(
 
 
 # ---------------------------------------------------------------------------
+# Subfase 0.12: diagnostico de infactibilidad / huecos estructurales
+# ---------------------------------------------------------------------------
+
+DIAS_ORDEN = ["LUNES","MARTES","MIERCOLES","JUEVES","VIERNES","SABADO","DOMINGO"]
+
+
+def _dia_label(d: str) -> str:
+    return {
+        "LUNES": "lunes", "MARTES": "martes", "MIERCOLES": "miércoles",
+        "JUEVES": "jueves", "VIERNES": "viernes",
+        "SABADO": "sábado", "DOMINGO": "domingo",
+    }.get(d, d.lower())
+
+
+def _capacidad_max_horas_trabajador(t: dict) -> float:
+    """Horas máximas semanales razonables del trabajador segun su contrato."""
+    c = t["contrato"]
+    if c["tipo"] == "fijo":
+        h = c["horas"]
+        # Flexibilidad legal: contratos de 40h pueden subir a 44h.
+        if h == 40:
+            return 44.0
+        return float(h)
+    return float(c["max_horas"])
+
+
+def _trabajador_disponible_dia(t: dict, dia: str) -> bool:
+    """Devuelve False si el dia es dia_libre fijo del trabajador."""
+    r = t.get("restricciones", {})
+    return dia not in r.get("dias_libres", [])
+
+
+def _trabajador_tiene_etiqueta(t: dict, etiqueta: str) -> bool:
+    return etiqueta in t.get("etiquetas", [])
+
+
+def _trabajador_rol_indice(t: dict, roles_jerarquia: List[str]) -> int:
+    """Indice del rol del trabajador (0 = base, N-1 = top)."""
+    try:
+        return roles_jerarquia.index(t["rol"])
+    except ValueError:
+        return 0
+
+
+def _hora_a_min(h: str) -> int:  # noqa: F811
+    hh, mm = map(int, h.split(":"))
+    return hh * 60 + mm
+
+
+def _hora_fin_a_min(h: str) -> int:  # noqa: F811
+    if h == "00:00":
+        return 24 * 60
+    return _hora_a_min(h)
+
+
+def diagnosticar_infactibilidad(
+    problema,
+    huecos_por_slot: dict | None = None,
+) -> Diagnostico:
+    """Análisis estructural del problema cuando hay infactibilidad o huecos
+    estructurales. Detecta cuellos de botella (capacidad, rol, etiqueta,
+    restricciones individuales contradictorias) y genera propuestas accionables
+    en español. NO vuelve a llamar al solver: usa solo análisis combinatorio
+    sobre el `Problema` cargado.
+
+    Args:
+        problema: el Problema ya cargado (con expansion de demanda por slot).
+        huecos_por_slot: opcional, dict {(dia, slot): n_personas_faltan} si la
+                         solucion CP-SAT trajo huecos concretos para enriquecer
+                         el diagnostico con info real.
+    """
+    p = problema
+    sd = p.slot_duracion_min
+    propuestas: List[Propuesta] = []
+
+    # ----- Capacidad agregada -----
+    demanda_slots = sum(
+        p.demanda_num_dia[d][s]
+        for d in p.dias
+        for s in range(p.num_slots_dia(d))
+    )
+    demanda_total_h = demanda_slots * sd / 60.0
+    capacidad_total_h = sum(_capacidad_max_horas_trabajador(t) for t in p.trabajadores)
+    deficit_h = max(0.0, demanda_total_h - capacidad_total_h)
+
+    # 1) Capacidad global insuficiente
+    if deficit_h > 0.5:
+        # ¿Cuanto se ampliaria si subimos las horquillas en +50%?
+        capacidad_ampliada = sum(
+            _capacidad_max_horas_trabajador(t) * (1.5 if t["contrato"]["tipo"] == "horquilla" else 1.1)
+            for t in p.trabajadores
+        )
+        accion = (
+            f"Amplía las horquillas o añade un trabajador (faltan ~{deficit_h:.0f}h). "
+            f"Con horquillas +50% llegarías a {capacidad_ampliada:.0f}h totales."
+            if capacidad_ampliada >= demanda_total_h
+            else f"Añade al menos un trabajador (la plantilla actual no puede cubrir la demanda ni ampliando todas las horquillas; faltan ~{deficit_h:.0f}h)."
+        )
+        propuestas.append(Propuesta(
+            severidad="critica",
+            categoria="capacidad",
+            titulo="Plantilla insuficiente para la demanda",
+            mensaje=f"Demanda total: {demanda_total_h:.0f}h. Capacidad máxima de la plantilla: {capacidad_total_h:.0f}h. Faltan ~{deficit_h:.0f}h.",
+            accion_sugerida=accion,
+        ))
+
+    # ----- Capacidad por dia con dias_libres aplicados -----
+    for d in p.dias:
+        demanda_dia_slots = sum(p.demanda_num_dia[d])
+        demanda_dia_h = demanda_dia_slots * sd / 60.0
+        # Cada trabajador disponible aporta como máximo 9h al dia.
+        n_disponibles = sum(1 for t in p.trabajadores if _trabajador_disponible_dia(t, d))
+        capacidad_dia_h = n_disponibles * 9.0
+        if demanda_dia_h > capacidad_dia_h + 0.5:
+            bloqueados = [t["nombre"] for t in p.trabajadores if not _trabajador_disponible_dia(t, d)]
+            propuestas.append(Propuesta(
+                severidad="alta",
+                categoria="capacidad",
+                titulo=f"{_dia_label(d).capitalize()}: capacidad diaria insuficiente",
+                mensaje=(
+                    f"El {_dia_label(d)} se necesitan {demanda_dia_h:.0f}h y solo "
+                    f"{n_disponibles} trabajadores están disponibles ({capacidad_dia_h:.0f}h máx). "
+                    f"Bloqueados por día libre: {', '.join(bloqueados) if bloqueados else 'ninguno'}."
+                ),
+                accion_sugerida=(
+                    f"Libera el {_dia_label(d)} de algún trabajador con día libre fijo, "
+                    f"o reduce la demanda de ese día."
+                ) if bloqueados else
+                f"Añade un trabajador con disponibilidad el {_dia_label(d)}.",
+                afecta_dia=d,
+            ))
+
+    # ----- Cobertura por nivel jerarquico -----
+    for d in p.dias:
+        for nivel_idx, rol_min in enumerate(p.roles_jerarquia):
+            # Demanda acumulada en este nivel o superior (suma jerárquica).
+            n_disponibles_nivel = sum(
+                1 for t in p.trabajadores
+                if _trabajador_rol_indice(t, p.roles_jerarquia) >= nivel_idx
+                and _trabajador_disponible_dia(t, d)
+            )
+            max_acumulado_demandado = max(
+                (
+                    sum(p.demanda_rol_dia[d][s].get(r, 0) for r in p.roles_jerarquia[nivel_idx:])
+                    for s in range(p.num_slots_dia(d))
+                ),
+                default=0,
+            )
+            if max_acumulado_demandado > n_disponibles_nivel and nivel_idx > 0:
+                propuestas.append(Propuesta(
+                    severidad="alta",
+                    categoria="rol",
+                    titulo=f"Falta personal de rol {rol_min} o superior el {_dia_label(d)}",
+                    mensaje=(
+                        f"Se demanda hasta {max_acumulado_demandado} personas de rol "
+                        f"{rol_min} o superior simultáneas, pero solo hay "
+                        f"{n_disponibles_nivel} disponibles ese día."
+                    ),
+                    accion_sugerida=(
+                        f"Promociona a un trabajador a rol {rol_min} o superior, "
+                        f"o añade un nuevo trabajador en ese rol."
+                    ),
+                    afecta_dia=d,
+                ))
+
+    # ----- Cobertura por etiqueta -----
+    etiquetas_requeridas = set()
+    for d in p.dias:
+        for s in range(p.num_slots_dia(d)):
+            for e in p.etiquetas_dia[d][s]:
+                etiquetas_requeridas.add(e)
+    for e in etiquetas_requeridas:
+        workers_con_etiqueta = [t["nombre"] for t in p.trabajadores if _trabajador_tiene_etiqueta(t, e)]
+        if len(workers_con_etiqueta) == 0:
+            propuestas.append(Propuesta(
+                severidad="critica",
+                categoria="etiqueta",
+                titulo=f"Etiqueta «{e}» sin nadie capacitado",
+                mensaje=f"Se requiere la etiqueta «{e}» en alguna franja pero ningún trabajador la tiene.",
+                accion_sugerida=f"Capacita a algún trabajador en «{e}» o quita esa etiqueta de la franja.",
+            ))
+        elif len(workers_con_etiqueta) == 1:
+            propuestas.append(Propuesta(
+                severidad="media",
+                categoria="etiqueta",
+                titulo=f"Etiqueta «{e}» con solo un trabajador",
+                mensaje=f"«{e}» la tiene solo {workers_con_etiqueta[0]} — punto único de fallo.",
+                accion_sugerida=f"Capacita a un segundo trabajador en «{e}» para tener margen.",
+                afecta_trabajador=workers_con_etiqueta[0],
+            ))
+
+    # ----- Restricciones individuales contradictorias -----
+    for t in p.trabajadores:
+        r = t.get("restricciones", {})
+        dias_libres = set(r.get("dias_libres", []))
+
+        # trabajar_obligatorio en un dia_libre
+        for to in r.get("trabajar_obligatorio", []):
+            if to["dia"] in dias_libres:
+                propuestas.append(Propuesta(
+                    severidad="critica",
+                    categoria="restriccion",
+                    titulo=f"{t['nombre']}: restricciones contradictorias",
+                    mensaje=(
+                        f"{t['nombre']} tiene el {_dia_label(to['dia'])} como día libre fijo "
+                        f"y a la vez una ventana obligatoria {to['desde']}–{to['hasta']} ese día."
+                    ),
+                    accion_sugerida=f"Elimina una de las dos restricciones de {t['nombre']} para el {_dia_label(to['dia'])}.",
+                    afecta_trabajador=t["nombre"],
+                    afecta_dia=to["dia"],
+                ))
+            # ventana obligatoria contradicha por no_antes/no_despues
+            desde_min = _hora_a_min(to["desde"])
+            hasta_min = _hora_fin_a_min(to["hasta"])
+            for na in r.get("no_antes_de", []):
+                aplica = na["dias"] == "TODOS" or to["dia"] in (na["dias"] if isinstance(na["dias"], list) else [na["dias"]])
+                if aplica and _hora_a_min(na["hora"]) > desde_min:
+                    propuestas.append(Propuesta(
+                        severidad="critica",
+                        categoria="restriccion",
+                        titulo=f"{t['nombre']}: ventana obligatoria choca con «no antes de»",
+                        mensaje=(
+                            f"{t['nombre']} debe trabajar desde las {to['desde']} el {_dia_label(to['dia'])} "
+                            f"pero no puede empezar antes de las {na['hora']}."
+                        ),
+                        accion_sugerida=f"Ajusta la ventana obligatoria o la regla «no antes de» de {t['nombre']}.",
+                        afecta_trabajador=t["nombre"],
+                        afecta_dia=to["dia"],
+                    ))
+            for nd in r.get("no_despues_de", []):
+                aplica = nd["dias"] == "TODOS" or to["dia"] in (nd["dias"] if isinstance(nd["dias"], list) else [nd["dias"]])
+                if aplica and _hora_a_min(nd["hora"]) < hasta_min:
+                    propuestas.append(Propuesta(
+                        severidad="critica",
+                        categoria="restriccion",
+                        titulo=f"{t['nombre']}: ventana obligatoria choca con «no después de»",
+                        mensaje=(
+                            f"{t['nombre']} debe trabajar hasta las {to['hasta']} el {_dia_label(to['dia'])} "
+                            f"pero no puede trabajar después de las {nd['hora']}."
+                        ),
+                        accion_sugerida=f"Ajusta la ventana obligatoria o la regla «no después de» de {t['nombre']}.",
+                        afecta_trabajador=t["nombre"],
+                        afecta_dia=to["dia"],
+                    ))
+
+        # Trabajador con todos los dias bloqueados
+        if len(dias_libres) >= 6:
+            propuestas.append(Propuesta(
+                severidad="alta",
+                categoria="restriccion",
+                titulo=f"{t['nombre']}: casi sin días disponibles",
+                mensaje=f"{t['nombre']} solo puede trabajar {7 - len(dias_libres)} día(s) a la semana.",
+                accion_sugerida=f"Revisa los días libres de {t['nombre']} si su contrato es de muchas horas.",
+                afecta_trabajador=t["nombre"],
+            ))
+
+    # ----- Horquillas demasiado estrechas vs contrato fijo -----
+    for t in p.trabajadores:
+        c = t["contrato"]
+        if c["tipo"] == "horquilla":
+            ancho = c["max_horas"] - c["min_horas"]
+            # Si el deficit global existe y el max esta cerca del min, sugerir ampliar.
+            if deficit_h > 0.5 and ancho < 16:
+                propuestas.append(Propuesta(
+                    severidad="media",
+                    categoria="contrato",
+                    titulo=f"{t['nombre']}: horquilla estrecha podría ampliarse",
+                    mensaje=(
+                        f"{t['nombre']} tiene horquilla {c['min_horas']}-{c['max_horas']}h "
+                        f"({ancho}h de margen). Ampliar el techo daría aire al cuadrante."
+                    ),
+                    accion_sugerida=f"Sube el máximo de la horquilla de {t['nombre']} a {c['max_horas'] + 8}h.",
+                    afecta_trabajador=t["nombre"],
+                ))
+
+    # ----- Huecos por dia/franja del solver actual (si vinieron) -----
+    if huecos_por_slot:
+        huecos_por_dia: Dict[str, int] = {}
+        for (d, s), n in huecos_por_slot.items():
+            huecos_por_dia[d] = huecos_por_dia.get(d, 0) + n
+        top_dia = max(huecos_por_dia.items(), key=lambda x: x[1], default=None)
+        if top_dia and top_dia[1] > 0:
+            propuestas.append(Propuesta(
+                severidad="media",
+                categoria="capacidad",
+                titulo=f"El {_dia_label(top_dia[0])} concentra la mayor parte de los huecos",
+                mensaje=f"Quedan {top_dia[1]} slots-persona sin cubrir el {_dia_label(top_dia[0])}.",
+                accion_sugerida=f"Aumenta la disponibilidad del {_dia_label(top_dia[0])} (libera días, sube horquilla de algún trabajador, o suaviza la demanda de ese día).",
+                afecta_dia=top_dia[0],
+            ))
+
+    # Ordenar por severidad
+    sev_order = {"critica": 0, "alta": 1, "media": 2, "baja": 3}
+    propuestas.sort(key=lambda p_: sev_order.get(p_.severidad, 9))
+
+    return Diagnostico(
+        capacidad_total_h=round(capacidad_total_h, 1),
+        demanda_total_h=round(demanda_total_h, 1),
+        deficit_h=round(deficit_h, 1),
+        propuestas=propuestas,
+    )
+
+
+# ---------------------------------------------------------------------------
 # resolver_problema: orquestador publico
 # ---------------------------------------------------------------------------
 
@@ -818,7 +1124,12 @@ def resolver_problema(
 ) -> ScheduleResponse:
     """Carga el problema, construye el modelo, resuelve y serializa la
     respuesta. `seed` opcional aleatoriza la busqueda interna de CP-SAT
-    para obtener una rotacion alternativa equivalente."""
+    para obtener una rotacion alternativa equivalente.
+
+    Subfase 0.12: si el solver devuelve INFEASIBLE o si hay huecos
+    estructurales (> 2% de la demanda), se añade un Diagnostico con
+    propuestas accionables explicando los cuellos de botella.
+    """
     problema = cargar_problema(request)
     model, vars_ = construir_modelo(problema)
 
@@ -832,7 +1143,26 @@ def resolver_problema(
         )
 
     status = solver.Solve(model)
-    return serializar_response(solver, status, problema, vars_, seed)
+    response = serializar_response(solver, status, problema, vars_, seed)
+
+    # Subfase 0.12: añadir diagnóstico si procede.
+    necesita_diagnostico = (
+        response.estado in ("INFEASIBLE", "MODEL_INVALID", "UNKNOWN")
+        or (
+            response.slots_persona_demanda > 0
+            and response.slots_persona_huecos / response.slots_persona_demanda > 0.02
+        )
+    )
+    if necesita_diagnostico:
+        # Si tenemos solución parcial, extraemos los huecos slot-a-slot para
+        # enriquecer el análisis.
+        huecos_por_slot: dict = {}
+        if response.estado not in ("INFEASIBLE", "MODEL_INVALID"):
+            for h in response.huecos_cobertura:
+                huecos_por_slot[(h.dia, h.inicio)] = h.falta_personas
+        response.diagnostico = diagnosticar_infactibilidad(problema, huecos_por_slot)
+
+    return response
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import ScheduleEditor, {
   type WorkerForEditor,
   type AssignmentForEditor,
 } from "@/components/schedule/schedule-editor";
+import DiagnosticoPanel, { type Diagnostico } from "@/components/schedule/diagnostico-panel";
 import type { NeedRow } from "@/lib/schedule-coverage";
 
 interface ScheduleRunRow {
@@ -21,6 +22,7 @@ interface ScheduleRunRow {
   variant_group_id: string | null;
   variant_index: number | null;
   variant_chosen: boolean;
+  diagnostico: Diagnostico | string | null;
   huecos_cobertura: Array<{
     dia: string;
     inicio: string;
@@ -41,7 +43,7 @@ export default async function ScheduleRunPage({ params }: { params: Promise<{ id
     sql<ScheduleRunRow>(
       `SELECT id, nombre, estado, created_at, edited_at,
               variant_group_id, variant_index, variant_chosen,
-              huecos_cobertura
+              huecos_cobertura, diagnostico
        FROM schedule_runs
        WHERE id = $1 AND restaurant_id = $2`,
       [id, restaurantId]
@@ -169,6 +171,17 @@ export default async function ScheduleRunPage({ params }: { params: Promise<{ id
         initialAssignments={assignments}
         needs={needsRaw}
       />
+
+      {/* Diagnóstico de infactibilidad / huecos estructurales (subfase 0.12) */}
+      {run.diagnostico && (
+        <DiagnosticoPanel
+          diagnostico={
+            typeof run.diagnostico === "string"
+              ? (JSON.parse(run.diagnostico) as Diagnostico)
+              : run.diagnostico
+          }
+        />
+      )}
 
       {/* Huecos detectados (snapshot del solver) */}
       {run.huecos_cobertura && run.huecos_cobertura.length > 0 && (

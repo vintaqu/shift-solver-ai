@@ -210,6 +210,29 @@ class Metricas(BaseModel):
     partidas_por_trabajador: Dict[str, int]
 
 
+class Propuesta(BaseModel):
+    """Propuesta de cambio para resolver una infactibilidad detectada
+    (subfase 0.12). Cada propuesta describe un cuello de botella concreto
+    y sugiere una accion clara que el usuario puede ejecutar en la web."""
+    severidad: Literal["critica", "alta", "media", "baja"]
+    categoria: Literal["capacidad", "rol", "etiqueta", "restriccion", "contrato"]
+    titulo: str
+    mensaje: str
+    accion_sugerida: str
+    afecta_trabajador: Optional[str] = None
+    afecta_dia: Optional[str] = None
+
+
+class Diagnostico(BaseModel):
+    """Diagnostico del cuadrante cuando es INFEASIBLE o tiene muchos huecos.
+    Contiene KPIs globales de capacidad y una lista de propuestas accionables
+    ordenadas por severidad."""
+    capacidad_total_h: float
+    demanda_total_h: float
+    deficit_h: float
+    propuestas: List[Propuesta] = Field(default_factory=list)
+
+
 class ScheduleResponse(BaseModel):
     """Salida del endpoint POST /solve."""
     estado: Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE", "MODEL_INVALID", "UNKNOWN"]
@@ -233,3 +256,7 @@ class ScheduleResponse(BaseModel):
     # que recalcular).
     gaps_entre_jornadas: List[GapEntreJornadas] = Field(default_factory=list)
     pausas_obligatorias: List[PausaObligatoria] = Field(default_factory=list)
+    # Diagnostico de infactibilidad (subfase 0.12). Solo se rellena cuando
+    # el solver no encuentra solucion o devuelve un cuadrante con huecos
+    # estructurales relevantes. Si todo va bien, queda en None.
+    diagnostico: Optional[Diagnostico] = None
