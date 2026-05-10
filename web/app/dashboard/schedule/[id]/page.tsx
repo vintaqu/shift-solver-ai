@@ -53,9 +53,11 @@ export default async function ScheduleRunPage({ params }: { params: Promise<{ id
     ),
     sql(
       `SELECT w.id, w.nombre, w.rol,
-              c.tipo as contrato_tipo, c.horas, c.min_horas, c.max_horas
+              c.tipo as contrato_tipo, c.horas, c.min_horas, c.max_horas,
+              wr.restricciones
        FROM workers w
        LEFT JOIN contracts c ON c.worker_id = w.id
+       LEFT JOIN worker_restrictions wr ON wr.worker_id = w.id
        WHERE w.restaurant_id = $1
        ORDER BY w.nombre`,
       [restaurantId]
@@ -78,6 +80,14 @@ export default async function ScheduleRunPage({ params }: { params: Promise<{ id
       w.contrato_tipo === "fijo"
         ? `${w.horas}h/sem`
         : `${w.min_horas}–${w.max_horas}h/sem`,
+    contrato_tipo: w.contrato_tipo as "fijo" | "horquilla",
+    contrato_horas: (w.horas as number) ?? null,
+    contrato_min: (w.min_horas as number) ?? null,
+    contrato_max: (w.max_horas as number) ?? null,
+    restricciones:
+      typeof w.restricciones === "string"
+        ? JSON.parse(w.restricciones)
+        : ((w.restricciones as Record<string, unknown>) ?? {}),
   }));
 
   const assignments: AssignmentForEditor[] = assignmentsRaw.map((a) => ({

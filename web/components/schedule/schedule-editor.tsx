@@ -7,8 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  CheckCircle2, AlertCircle, Clock, Coffee, Pencil, Lock, LockOpen,
-  Loader2, Edit3, Sparkles, Plus, Check, X,
+  CheckCircle2, AlertCircle, Clock, Coffee, Pencil, Lock,
+  Loader2, Edit3, Sparkles, Plus, Check, X, ShieldAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -19,7 +19,14 @@ import {
   totalHoras,
   inferTipo,
 } from "@/lib/schedule-coverage";
+import {
+  validateSchedule,
+  violationsByCell,
+  type WorkerForValidation,
+  type WorkerRestrictions,
+} from "@/lib/legal-validation";
 import ShiftEditDialog from "./shift-edit-dialog";
+import LegalWarningsPanel from "./legal-warnings-panel";
 
 const DIAS = ["LUNES","MARTES","MIERCOLES","JUEVES","VIERNES","SABADO","DOMINGO"] as const;
 const DIA_LABELS: Record<string, string> = {
@@ -32,6 +39,11 @@ export interface WorkerForEditor {
   nombre: string;
   rol: string;
   contrato_str: string;
+  contrato_tipo: "fijo" | "horquilla";
+  contrato_horas: number | null;
+  contrato_min: number | null;
+  contrato_max: number | null;
+  restricciones: WorkerRestrictions;
 }
 
 export interface AssignmentForEditor {
@@ -75,6 +87,30 @@ export default function ScheduleEditor({
     for (const a of assignments) m.set(`${a.worker_id}|${a.dia}`, a);
     return m;
   }, [assignments]);
+
+  // Legal validation — recomputed on every assignment change
+  const violations = useMemo(() => {
+    const validators: WorkerForValidation[] = workers.map((w) => ({
+      id: w.id,
+      nombre: w.nombre,
+      contrato_tipo: w.contrato_tipo,
+      contrato_horas: w.contrato_horas,
+      contrato_min: w.contrato_min,
+      contrato_max: w.contrato_max,
+      restricciones: w.restricciones ?? {},
+    }));
+    return validateSchedule(
+      validators,
+      assignments.map((a) => ({ worker_id: a.worker_id, dia: a.dia, tramos: a.tramos }))
+    );
+  }, [workers, assignments]);
+
+  const violationsCellMap = useMemo(() => violationsByCell(violations), [violations]);
+  const workerNamesMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const w of workers) m.set(w.id, w.nombre);
+    return m;
+  }, [workers]);
 
   const editingAssignment =
     editing ? lookup.get(`${editing.workerId}|${editing.dia}`) : undefined;
@@ -154,6 +190,13 @@ export default function ScheduleEditor({
       {/* Live stats banner */}
       <LiveStats stats={stats} initialStats={initialStats} delta={huecosDelta} editMode={editMode} />
 
+      {/* Legal validation panel */}
+      <LegalWarningsPanel
+        violations={violations}
+        workerNames={workerNamesMap}
+        onJump={editMode ? (workerId, dia) => setEditing({ workerId, dia }) : undefined}
+      />
+
       {/* Schedule grid */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden">
         {/* Desktop view */}
@@ -187,11 +230,14 @@ export default function ScheduleEditor({
                     </td>
                     {DIAS.map((d) => {
                       const a = lookup.get(`${w.id}|${d}`);
+                      const cellViolations = violationsCellMap.get(`${w.id}|${d}`) ?? [];
                       return (
                         <td key={d} className="px-1 py-1 align-middle">
                           <ShiftCell
                             assignment={a}
                             editMode={editMode}
+                            violations={cellViolations.length}
+                            hasError={cellViolations.some((v) => v.severity === "error")}
                             onEdit={() => editMode && setEditing({ workerId: w.id, dia: d })}
                           />
                         </td>
@@ -259,6 +305,18 @@ export default function ScheduleEditor({
           dia={editing.dia}
           initialTramos={editingAssignment?.tramos ?? []}
           onSave={handleSaveTramos}
+          workerValidation={{
+            id: editingWorker.id,
+            nombre: editingWorker.nombre,
+            contrato_tipo: editingWorker.contrato_tipo,
+            contrato_horas: editingWorker.contrato_horas,
+            contrato_min: editingWorker.contrato_min,
+            contrato_max: editingWorker.contrato_max,
+            restricciones: editingWorker.restricciones ?? {},
+          }}
+          weekAssignments={assignments
+            .filter((a) => a.worker_id === editing.workerId)
+            .map((a) => ({ worker_id: a.worker_id, dia: a.dia, tramos: a.tramos }))}
         />
       )}
     </>
@@ -268,14 +326,24 @@ export default function ScheduleEditor({
 // ─── Cell ───────────────────────────────────────────────────────────────────
 
 function ShiftCell({
-  assignment, editMode, onEdit,
+  assignment, editMode, onEdit, violations, hasError,
 }: {
   assignment?: AssignmentForEditor;
   editMode: boolean;
   onEdit: () => void;
+  violations: number;
+  hasError: boolean;
 }) {
   const isEmpty = !assignment || assignment.tramos.length === 0;
   const tipo = assignment ? inferTipo(assignment.tramos) : "descanso";
+
+  // Cells that violate restrictions get a colored ring even when empty
+  const violationRing =
+    violations > 0
+      ? hasError
+        ? "ring-1 ring-red-500/60"
+        : "ring-1 ring-amber-500/50"
+      : "";
 
   if (isEmpty) {
     return (
@@ -283,10 +351,11 @@ function ShiftCell({
         onClick={editMode ? onEdit : undefined}
         disabled={!editMode}
         className={cn(
-          "w-full h-14 rounded-lg flex items-center justify-center transition-colors",
+          "relative w-full h-14 rounded-lg flex items-center justify-center transition-colors",
           editMode
             ? "border border-dashed border-slate-700 hover:border-indigo-500 hover:bg-indigo-500/5 cursor-pointer"
-            : "border border-transparent"
+            : "border border-transparent",
+          violationRing
         )}
       >
         {editMode ? (
@@ -294,11 +363,19 @@ function ShiftCell({
         ) : (
           <Coffee className="h-3.5 w-3.5 text-slate-700" />
         )}
+        {violations > 0 && (
+          <span className={cn(
+            "absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full flex items-center justify-center",
+            hasError ? "bg-red-500" : "bg-amber-500"
+          )}>
+            <ShieldAlert className="h-2 w-2 text-white" />
+          </span>
+        )}
       </button>
     );
   }
 
-  const color =
+  const baseColor =
     tipo === "continuada"
       ? "bg-indigo-600/20 border-indigo-500/30 text-indigo-300"
       : "bg-amber-500/20 border-amber-500/30 text-amber-300";
@@ -308,8 +385,9 @@ function ShiftCell({
       onClick={editMode ? onEdit : undefined}
       disabled={!editMode}
       className={cn(
-        "w-full rounded-lg border px-2 py-1.5 transition-all",
-        color,
+        "relative w-full rounded-lg border px-2 py-1.5 transition-all",
+        baseColor,
+        violationRing,
         editMode && "cursor-pointer hover:scale-[1.02] hover:ring-1 hover:ring-indigo-500/60"
       )}
     >
@@ -321,6 +399,14 @@ function ShiftCell({
           {assignment.horas.toFixed(1)}h{tipo === "partida" && " · partida"}
         </span>
       </div>
+      {violations > 0 && (
+        <span className={cn(
+          "absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center",
+          hasError ? "bg-red-500" : "bg-amber-500"
+        )} title={`${violations} ${violations === 1 ? "aviso" : "avisos"}`}>
+          <ShieldAlert className="h-2.5 w-2.5 text-white" />
+        </span>
+      )}
     </button>
   );
 }
